@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from pydantic import BaseModel
@@ -40,7 +41,7 @@ async def chat(data: ChatMessage):
             response = await client.post(
                 f"{OLLAMA_API}/api/generate",
                 json={
-                    "model": "llama3.2:1b",
+                    "model": "llama3",
                     "prompt": data.message,
                     "stream": False
                 },
