@@ -4,7 +4,7 @@ import type { Conversation, Message } from './types';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import Header from './components/Header';
-import { getStatus, sendChat } from './api';
+import { getStatus, handleSend } from './api';
 
 function App() {
   const [status, setStatus] = useState<string>('Verbinde...');
@@ -54,12 +54,10 @@ function App() {
     setLoading(true);
     setError('');
 
-    const result = await sendChat(input);
+    const result = await handleSend(input, currentConversationId, setConversations, setError);
+    
     if (result.error) {
       setError(result.error);
-    } else if (result.response) {
-      const assistantMessage: Message = { id: (Date.now() + 1).toString(), text: result.response, sender: 'assistant', timestamp: new Date() };
-      setConversations(prev => prev.map(c => c.id === currentConversationId ? { ...c, messages: [...c.messages, assistantMessage] } : c));
     }
 
     setLoading(false);

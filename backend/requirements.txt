@@ -2,3 +2,7 @@ uvicorn
 fastapi
 httpx
 pydantic
+python-multipart
+asyncpg
+pypdf
+python-docx

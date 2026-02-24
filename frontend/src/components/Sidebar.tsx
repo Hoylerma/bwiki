@@ -3,6 +3,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import ChatIcon from '@mui/icons-material/Chat';
 import type { Conversation } from '../types';
+import FileUpload from './FileUpload';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -29,6 +30,11 @@ function Sidebar({ conversations, currentConversationId, startNewConversation, s
       </Button>
 
       <Divider sx={{ mb: 2, backgroundColor: '#4a4a4a' }} />
+
+      {/* RAG Dokumente Upload */}
+      <FileUpload />
+
+      <Divider sx={{ my: 1, backgroundColor: '#4a4a4a' }} />
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         <Typography variant="subtitle2" sx={{ mb: 1, opacity: 0.7 }}>Konversationen</Typography>

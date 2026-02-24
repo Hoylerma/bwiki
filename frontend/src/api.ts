@@ -1,4 +1,9 @@
-const API_BASE_URL = 'http://127.0.0.1:8000';
+import type { Conversation } from './types'; // Pfad anpassen
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+
+
+let activeAbortController: AbortController | null = null;
 
 export async function getStatus(): Promise<string> {
   try {
@@ -6,28 +11,79 @@ export async function getStatus(): Promise<string> {
     const data = await response.json();
     return data.status || 'Verbunden';
   } catch (error) {
-    console.error('Status-Fehler:', error);
     return 'Backend nicht erreichbar';
   }
 }
 
-export async function sendChat(message: string): Promise<{ response?: string; error?: string }> {
+export const handleStop = () => {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+};
+
+export async function handleSend(
+  input: string,
+  conversationId: string,
+  setConversations: React.Dispatch<React.SetStateAction<Conversation[]>>,
+  setError: React.Dispatch<React.SetStateAction<string>>
+): Promise<{ error?: string; response?: string }> {
   try {
+    if (activeAbortController) activeAbortController.abort();
+    activeAbortController = new AbortController();
+    
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message: input }),
+      signal: activeAbortController.signal
     });
 
-    const data = await response.json();
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response body is not readable');
 
-    if (!response.ok) {
-      return { error: data.error || 'Fehler beim Senden der Nachricht' };
+    const decoder = new TextDecoder();
+    let accumulatedResponse = '';
+
+    
+    const assistantMsgId = (Date.now() + 1).toString();
+    setConversations(prev => prev.map(c => 
+      c.id === conversationId 
+        ? {
+            ...c,
+            messages: [...c.messages, { id: assistantMsgId, text: '', sender: 'assistant', timestamp: new Date() }]
+          }
+        : c
+    ));
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      accumulatedResponse += chunk;
+      
+      setConversations((prev) => prev.map(c => 
+        c.id === conversationId 
+          ? {
+              ...c,
+              messages: c.messages.map(m => 
+                m.id === assistantMsgId ? { ...m, text: accumulatedResponse } : m
+              )
+            }
+          : c
+      ));
     }
-
-    return { response: data.response };
-  } catch (error) {
-    console.error('Chat-Fehler:', error);
-    return { error: 'Netzwerkfehler - Backend nicht erreichbar' };
+    return { response: accumulatedResponse };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.log('Anfrage abgebrochen');
+    } else {
+      console.error('Fehler:', error);
+      setError('Fehler beim Senden der Nachricht');
+    }
+    return { error: error.message };
+  } finally {
+    activeAbortController = null;
   }
-}
+};
