@@ -1,14 +1,21 @@
-import json
-
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
-import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
-from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel
 import os
 
-from rag import init_db, close_db, ingest_document, build_rag_context, list_documents, delete_document
+from langchain_rag import (
+    CHAT_MODEL,
+    OLLAMA_BASE_URL,
+    close_db,
+    delete_document,
+    ingest_document,
+    init_db,
+    list_documents,
+    rag_search_async,
+)
 
 app = FastAPI()
 
@@ -32,8 +39,6 @@ app.add_middleware(
 
 class ChatMessage(BaseModel):
     message: str
-
-OLLAMA_API = os.getenv("OLLAMA_API", "http://localhost:11434")
 
 
 @app.on_event("startup")
@@ -102,53 +107,41 @@ async def remove_document(filename: str):
 
 
 async def stream_response(prompt: str, request: Request):
-    # RAG-Kontext abrufen
+    # Deterministic RAG: retrieve context first, then stream LLM response.
     try:
-        rag_context = await build_rag_context(prompt)
+        rag_context = await rag_search_async(prompt)
     except Exception as e:
         print(f"RAG-Kontext konnte nicht abgerufen werden: {e}")
         rag_context = ""
 
+    system_content = "Du bist ein hilfreicher Assistent. Antworte immer auf Deutsch."
+
     if rag_context:
-        augmented_prompt = (
+        user_content = (
             "Beantworte die folgende Frage basierend auf dem bereitgestellten Kontext. "
-            "Wenn der Kontext nicht ausreicht, nutze dein allgemeines Wissen, aber weise darauf hin.\n\n"
+            "Wenn der Kontext nicht ausreicht, nutze dein allgemeines Wissen, aber weise darauf hin. "
+            "Nenne am Ende die verwendeten Quellen.\n\n"
             f"--- KONTEXT ---\n{rag_context}\n--- ENDE KONTEXT ---\n\n"
             f"Frage: {prompt}"
         )
     else:
-        augmented_prompt = prompt
+        user_content = prompt
 
-    async with httpx.AsyncClient() as client:
-        try:
-            async with client.stream("POST",
-                f"{OLLAMA_API}/api/generate",
-                json={
-                    "model": "llama3.2",
-                    "prompt": augmented_prompt,
-                    "stream": True,
-                    "options": {
-                        "num_ctx": 8192
-                    }
-                },
-                timeout=None
-            ) as response:
-                async for line in response.aiter_lines():
-                    if await request.is_disconnected():
-                        print("Client hat die Verbindung getrennt")
-                        return
-                    if line:
-                        chunk = json.loads(line)
-                        if chunk.get("error"):
-                            print(f"Ollama Fehler: {chunk['error']}")
-                            yield f"\n\n[Fehler: {chunk['error']}]"
-                            return
-                        yield chunk.get("response", "")
-                        if chunk.get("done"):
-                            break
-        except Exception as e:
-            print(f"Fehler bei der Anfrage an Ollama: {e}")
-            yield "\n\n[Fehler: Verbindung zu Ollama fehlgeschlagen]"
+    llm = ChatOllama(model=CHAT_MODEL, base_url=OLLAMA_BASE_URL)
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_content),
+    ]
+
+    try:
+        async for chunk in llm.astream(messages):
+            if await request.is_disconnected():
+                print("Client hat die Verbindung getrennt")
+                return
+            yield chunk.content
+    except Exception as e:
+        print(f"Fehler bei der Anfrage an Ollama: {e}")
+        yield "\n\n[Fehler: Verbindung zu Ollama fehlgeschlagen]"
 
 
 @app.post("/chat")
